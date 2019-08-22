@@ -6,6 +6,9 @@
 // Version: 1.4.0
 // (Scrounger): bug fix createState -> states werden beim Skript start erstellt
 // (Scrounger): bug fix enableHistory -> wird nur aktiviert, wenn noch nicht aktiviert. Timeout für Aktivierung hinzugefügt um Fehlermeldung zu vermeiden
+// (Scrounger): setState ack = true hinzugefügt
+// (Scrounger): History default Werte hinzugefügt
+// (Scrounger): optional kann für Datenpunkte History Einstellung changesMinDelta für Kosten, Verbrauch und Zaehlerstand individuell eingegeben werden
 
 
 //----------------------------------------------------------------------------//
@@ -19,6 +22,24 @@ var enable_history = true;
 
 // history Instanz
 var instance_history = 'sql.0';
+
+// history Instanz default Werte
+var history_default_Kosten_debounce = 1000;
+var history_default_Verbrauch_debounce = 1000;
+var history_default_Zaehlerstand_debounce = 1000;
+
+var history_default_Kosten_retention = 63072000;
+var history_default_Verbrauch_retention = 63072000;
+var history_default_Zaehlerstand_retention = 63072000;
+
+var history_default_Kosten_changesRelogInterval = 3600;
+var history_default_Verbrauch_changesRelogInterval = 3600;
+var history_default_Zaehlerstand_changesRelogInterval = 3600;
+
+var history_default_Kosten_changesMinDelta = 0.05;
+var history_default_Verbrauch_changesMinDelta = 0.01;
+var history_default_Zaehlerstand_changesMinDelta = 0.1;
+
 
 // Geräte können unterschiedliche Preise haben
 var enable_unterschiedlichePreise = false;
@@ -55,11 +76,11 @@ var KumulierterWertIstBereitsInKilo = false;
 var eigeneDatenpunkte = [
 
     // Beispiel:
-    // ['Datenpunkt', 'Aliasname', 'Einheit kumulierter Wert', 'Einheit berechnete Werte (kilo/1000)' ],
+    // ['Datenpunkt', 'Aliasname', 'Einheit kumulierter Wert', 'Einheit berechnete Werte (kilo/1000)', optional 'History Kosten changesMinDelta', optional 'History Verbrauch changesMinDelta, optional 'History Zaehlerstand changesMinDelta ],
 
     // Stromzähler Wohnung
     [myDevices.Sensoren.Strom.Wohnung.Energie.getId(), 'Sensoren.Strom.Wohnung', 'Wh', 'kWh'],
-
+    
 
 
     // [myDevices.Licht.Kueche.Main.Energie.getId(), 'Licht.Kueche.Main', 'Wh', 'kWh'],
@@ -247,17 +268,27 @@ function pruefeEigeneDatenpunkte() {
             var einheit = eigeneDatenpunkte[i][2];
             var einheit_kilo = eigeneDatenpunkte[i][3];
 
+            let Kosten_changesMinDelta =  (eigeneDatenpunkte[i][4]) ? eigeneDatenpunkte[i][4] : history_default_Kosten_changesMinDelta;
+            let Verbrauch_changesMinDelta =  (eigeneDatenpunkte[i][5]) ? eigeneDatenpunkte[i][5] : history_default_Verbrauch_changesMinDelta;
+            let Zaehlerstand_changesMinDelta =  (eigeneDatenpunkte[i][6]) ? eigeneDatenpunkte[i][6] : history_default_Zaehlerstand_changesMinDelta;
+
+            log(`Kosten_changesMinDelta: ${Kosten_changesMinDelta}, Verbrauch_changesMinDelta: ${Verbrauch_changesMinDelta}, Zaehlerstand_changesMinDelta: ${Zaehlerstand_changesMinDelta}`)
+
             if (logging) console.log("Alias:" + alias + " Datenpunkt:" + datenpunkt + " Einheit:" + einheit + " Einheit_kilo:" + einheit_kilo);
 
             // bug fix, da States manchmal nicht sauber erstellt werden
-            erstelleStates(alias, einheit, einheit_kilo);
+            erstelleStates(alias, einheit, einheit_kilo, Kosten_changesMinDelta, Verbrauch_changesMinDelta, Zaehlerstand_changesMinDelta);
 
             on(datenpunkt, function (obj) {
 
                 for (var i = 0; i < eigeneDatenpunkte.length; i++) {
 
+                    let Kosten_changesMinDelta =  (eigeneDatenpunkte[i][4]) ? eigeneDatenpunkte[i][4] : history_default_Kosten_changesMinDelta;
+                    let Verbrauch_changesMinDelta =  (eigeneDatenpunkte[i][5]) ? eigeneDatenpunkte[i][5] : history_default_Verbrauch_changesMinDelta;
+                    let Zaehlerstand_changesMinDelta =  (eigeneDatenpunkte[i][6]) ? eigeneDatenpunkte[i][6] : history_default_Zaehlerstand_changesMinDelta;
+
                     if (eigeneDatenpunkte[i][0] === obj.id)
-                        run(obj, eigeneDatenpunkte[i][1], eigeneDatenpunkte[i][2], eigeneDatenpunkte[i][3]);
+                        run(obj, eigeneDatenpunkte[i][1], eigeneDatenpunkte[i][2], eigeneDatenpunkte[i][3], Kosten_changesMinDelta, Verbrauch_changesMinDelta, Zaehlerstand_changesMinDelta);
                 }
             });
         }
@@ -269,7 +300,7 @@ pruefeEigeneDatenpunkte();
 //----------------------------------------------------------------------------//
 
 // Einlesen der aktuellen Daten vom Zähler
-function run(obj, alias, unit, unit_kilo) {
+function run(obj, alias, unit, unit_kilo, Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta) {
 
     if (logging) {
         log('-------- Strommesser ---------');
@@ -313,7 +344,7 @@ function run(obj, alias, unit, unit_kilo) {
             _unit_kilo = unit_kilo;
         }
 
-        erstelleStates(geraetename, _unit, _unit_kilo);
+        erstelleStates(geraetename, _unit, _unit_kilo, Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
 
         //------------------------------------------------------------------------//
 
@@ -337,7 +368,7 @@ function run(obj, alias, unit, unit_kilo) {
 
                 newValueKumuliert = parseFloat(newValueKumuliert);
 
-                setState(idKumuliert, newValueKumuliert);
+                setState(idKumuliert, newValueKumuliert, true);
 
             } else {
 
@@ -353,7 +384,7 @@ function run(obj, alias, unit, unit_kilo) {
             // Irgendetwas läuft außerplanmäßig. Wert wird sicherheitshalber gespeichert und nächster Lauf abgewartet
             NeustartEventuellErkannt = true;
 
-            setState(pfad + geraetename + '.config.NeustartErkanntAlterWert', obj.oldState.val);
+            setState(pfad + geraetename + '.config.NeustartErkanntAlterWert', obj.oldState.val, true);
         }
 
         if (NeustartEventuellErkannt) {
@@ -370,7 +401,7 @@ function run(obj, alias, unit, unit_kilo) {
         if (NeustartSicherErkannt) {
 
             // zurücksetzen der Variable
-            setState(pfad + geraetename + '.config.NeustartErkanntAlterWert', 0);
+            setState(pfad + geraetename + '.config.NeustartErkanntAlterWert', 0, true);
 
             //----------------------------------------------------------------//
 
@@ -528,9 +559,9 @@ function schreibeZaehlerstand(geraet, zeitraum) {
     // Zählerstand für übergebene Zeitraum und das Gerät in Wh auslesen und in kWh speichern (also durch 1000)
 
     if (KumulierterWertIstBereitsInKilo)
-        setState(idZaehlerstand, parseFloat((getState(idKumuliert).val).toFixed(AnzahlKommastellenZaehlerstand)));
+        setState(idZaehlerstand, parseFloat((getState(idKumuliert).val).toFixed(AnzahlKommastellenZaehlerstand)), true);
     else
-        setState(idZaehlerstand, parseFloat((getState(idKumuliert).val / 1000).toFixed(AnzahlKommastellenZaehlerstand)));
+        setState(idZaehlerstand, parseFloat((getState(idKumuliert).val / 1000).toFixed(AnzahlKommastellenZaehlerstand)), true);
 
     if (logging) log('Zählerstände für das Gerät ' + geraet + ' (' + zeitraum + ') in Objekten gespeichert');
 }
@@ -549,9 +580,9 @@ function rotateVerbrauchUndKosten(geraet, zeitraum, anzahl) {
             if (getObject(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + j)) {
 
                 if (i === 0)
-                    setState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Verbrauch.' + zeitraum).val);
+                    setState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Verbrauch.' + zeitraum).val, true);
                 else
-                    setState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + i).val);
+                    setState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Verbrauch._' + zeitraum + '.' + zeitraum + '_' + i).val, true);
             }
         }
     }
@@ -568,9 +599,9 @@ function rotateVerbrauchUndKosten(geraet, zeitraum, anzahl) {
             if (getObject(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + j)) {
 
                 if (i === 0)
-                    setState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Kosten.' + zeitraum).val);
+                    setState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Kosten.' + zeitraum).val, true);
                 else
-                    setState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + i).val);
+                    setState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + j, getState(instanz + pfad + geraet + '.Kosten._' + zeitraum + '.' + zeitraum + '_' + i).val, true);
             }
         }
     }
@@ -580,8 +611,8 @@ function resetVerbrauchUndKosten(geraet, zeitraum) {
 
     // Reset der Stromkosten für den übergebenen Zeitraum
     // Reset des Stromverbrauchs für den übergebenen Zeitraum 
-    setState(instanz + pfad + geraet + '.Kosten.' + zeitraum, 0);
-    setState(instanz + pfad + geraet + '.Verbrauch.' + zeitraum, 0);
+    setState(instanz + pfad + geraet + '.Kosten.' + zeitraum, 0, true);
+    setState(instanz + pfad + geraet + '.Verbrauch.' + zeitraum, 0, true);
 
     if (logging) log('Stromkosten und Stromverbrauch für das Gerät ' + geraet + ' (' + zeitraum + ') zurückgesetzt');
 }
@@ -617,19 +648,19 @@ function berechneVerbrauchUndKosten(geraet, zaehler, preis, grundpreis) {
         grundpreis_jahr = _grundpreis * 365;
 
         // Tag [Verbrauchskosten = (Zähler_ist - Zähler_Tagesbeginn) * Preis ] --- zaehler muss immer größer sein als Tages, Wochen, etc.-Wert
-        setState(instanz + pfad + geraet + '.Kosten.Tag', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Tag').val) * preis) + grundpreis_tag).toFixed(AnzahlKommastellenKosten)));  // Kosten an diesem Tag in €
+        setState(instanz + pfad + geraet + '.Kosten.Tag', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Tag').val) * preis) + grundpreis_tag).toFixed(AnzahlKommastellenKosten)), true);  // Kosten an diesem Tag in €
 
         // Woche
-        setState(instanz + pfad + geraet + '.Kosten.Woche', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Woche').val) * preis) + grundpreis_woche).toFixed(AnzahlKommastellenKosten)));
+        setState(instanz + pfad + geraet + '.Kosten.Woche', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Woche').val) * preis) + grundpreis_woche).toFixed(AnzahlKommastellenKosten)), true);
 
         // Monat
-        setState(instanz + pfad + geraet + '.Kosten.Monat', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Monat').val) * preis) + grundpreis_monat).toFixed(AnzahlKommastellenKosten)));
+        setState(instanz + pfad + geraet + '.Kosten.Monat', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Monat').val) * preis) + grundpreis_monat).toFixed(AnzahlKommastellenKosten)), true);
 
         // Quartal
-        setState(instanz + pfad + geraet + '.Kosten.Quartal', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Quartal').val) * preis) + grundpreis_quartal).toFixed(AnzahlKommastellenKosten)));
+        setState(instanz + pfad + geraet + '.Kosten.Quartal', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Quartal').val) * preis) + grundpreis_quartal).toFixed(AnzahlKommastellenKosten)), true);
 
         // Jahr
-        setState(instanz + pfad + geraet + '.Kosten.Jahr', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Jahr').val) * preis) + grundpreis_jahr).toFixed(AnzahlKommastellenKosten)));
+        setState(instanz + pfad + geraet + '.Kosten.Jahr', parseFloat((((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Jahr').val) * preis) + grundpreis_jahr).toFixed(AnzahlKommastellenKosten)), true);
 
         if (logging) log('Stromkosten (' + geraet + ') aktualisiert');
     }
@@ -637,24 +668,24 @@ function berechneVerbrauchUndKosten(geraet, zaehler, preis, grundpreis) {
     // Verbrauch berechnen
 
     // Tag [Verbrauchskosten = (Zähler_ist - Zähler_Tagesbeginn) * Preis ] --- zaehler muss immer größer sein als Tages, Wochen, etc.-Wert
-    setState(instanz + pfad + geraet + '.Verbrauch.Tag', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Tag').val).toFixed(AnzahlKommastellenVerbrauch)));           // Verbrauch an diesem Tag in kWh
+    setState(instanz + pfad + geraet + '.Verbrauch.Tag', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Tag').val).toFixed(AnzahlKommastellenVerbrauch)), true);           // Verbrauch an diesem Tag in kWh
 
     // Woche
-    setState(instanz + pfad + geraet + '.Verbrauch.Woche', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Woche').val).toFixed(AnzahlKommastellenVerbrauch)));
+    setState(instanz + pfad + geraet + '.Verbrauch.Woche', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Woche').val).toFixed(AnzahlKommastellenVerbrauch)), true);
 
     // Monat
-    setState(instanz + pfad + geraet + '.Verbrauch.Monat', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Monat').val).toFixed(AnzahlKommastellenVerbrauch)));
+    setState(instanz + pfad + geraet + '.Verbrauch.Monat', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Monat').val).toFixed(AnzahlKommastellenVerbrauch)), true);
 
     // Quartal
-    setState(instanz + pfad + geraet + '.Verbrauch.Quartal', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Quartal').val).toFixed(AnzahlKommastellenVerbrauch)));
+    setState(instanz + pfad + geraet + '.Verbrauch.Quartal', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Quartal').val).toFixed(AnzahlKommastellenVerbrauch)), true);
 
     // Jahr
-    setState(instanz + pfad + geraet + '.Verbrauch.Jahr', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Jahr').val).toFixed(AnzahlKommastellenVerbrauch)));
+    setState(instanz + pfad + geraet + '.Verbrauch.Jahr', parseFloat((zaehler - getState(instanz + pfad + geraet + '.Zaehlerstand.Jahr').val).toFixed(AnzahlKommastellenVerbrauch)), true);
 
     if (logging) log('Stromverbrauch (' + geraet + ') aktualisiert');
 }
 
-function erstelleStates(geraet, _unit, _unit_kilo) {
+function erstelleStates(geraet, _unit, _unit_kilo, Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta) {
 
     // Kumulierter Zählerstand (wird nie kleiner)
     createState(pfad + geraet + '.Zaehlerstand.kumuliert', 0, { name: 'Kumulierter Zählerstand (' + geraet + ')', type: 'number', unit: _unit });
@@ -738,18 +769,18 @@ function erstelleStates(geraet, _unit, _unit_kilo) {
     // history bei allen Datenpunkten aktivieren
     if (enable_history) {
         setTimeout(function () {
-            enableHistory(geraet, 'Tag');
-            enableHistory(geraet, 'Woche');
-            enableHistory(geraet, 'Monat');
-            enableHistory(geraet, 'Quartal');
-            enableHistory(geraet, 'Jahr');
+            enableHistory(geraet, 'Tag', Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
+            enableHistory(geraet, 'Woche', Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
+            enableHistory(geraet, 'Monat', Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
+            enableHistory(geraet, 'Quartal', Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
+            enableHistory(geraet, 'Jahr', Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta);
         }, 500);
     }
 
     if (logging) log('States in der Instanz ' + instanz + pfad + ' erstellt');
 }
 
-function enableHistory(geraet, zeitraum) {
+function enableHistory(geraet, zeitraum, Kosten_minDelta, Verbrauch_minDelta, Zaehlerstand_minDelta) {
 
     if (instance_history !== '') {
 
@@ -759,10 +790,10 @@ function enableHistory(geraet, zeitraum) {
                 id: instanz + pfad + geraet + '.Kosten.' + zeitraum,
                 options: {
                     changesOnly: true,
-                    debounce: 1000,
-                    retention: 63072000,
-                    changesRelogInterval: 3600,
-                    changesMinDelta: 0.01,
+                    debounce: history_default_Kosten_debounce,
+                    retention: history_default_Kosten_retention,
+                    changesRelogInterval: history_default_Kosten_changesRelogInterval,
+                    changesMinDelta: Kosten_minDelta,
                     storageType: "Number"
                 }
             }, function (result) {
@@ -778,10 +809,10 @@ function enableHistory(geraet, zeitraum) {
                 id: instanz + pfad + geraet + '.Verbrauch.' + zeitraum,
                 options: {
                     changesOnly: true,
-                    debounce: 1000,
-                    retention: 63072000,
-                    changesRelogInterval: 3600,
-                    changesMinDelta: 0.01,
+                    debounce: history_default_Verbrauch_debounce,
+                    retention: history_default_Verbrauch_retention,
+                    changesRelogInterval: history_default_Verbrauch_changesRelogInterval,
+                    changesMinDelta: Verbrauch_minDelta,
                     storageType: "Number"
                 }
             }, function (result) {
@@ -797,10 +828,10 @@ function enableHistory(geraet, zeitraum) {
                 id: instanz + pfad + geraet + '.Zaehlerstand.' + zeitraum,
                 options: {
                     changesOnly: true,
-                    debounce: 1000,
-                    retention: 63072000,
-                    changesRelogInterval: 3600,
-                    changesMinDelta: 0.01,
+                    debounce: history_default_Zaehlerstand_debounce,
+                    retention: history_default_Zaehlerstand_retention,
+                    changesRelogInterval: history_default_Zaehlerstand_changesRelogInterval,
+                    changesMinDelta: Zaehlerstand_minDelta,
                     storageType: "Number"
                 }
             }, function (result) {
@@ -874,7 +905,7 @@ function pruefePreisaenderung(geraet) {
 
             if (!getState(_PreisaenderungDurchgefuehrt).val) {
 
-                setState(_PreisaenderungDurchgefuehrt, true);
+                setState(_PreisaenderungDurchgefuehrt, true, true);
 
                 var alterArbeitspreis = getState(_Arbeitspreis).val;
                 var alterGrundpreis = getState(_Grundpreis).val;
@@ -882,8 +913,8 @@ function pruefePreisaenderung(geraet) {
                 var neuerArbeitspreis = getState(_ArbeitspreisNeu).val;
                 var neuerGrundpreis = getState(_GrundpreisNeu).val;
 
-                setState(_Arbeitspreis, neuerArbeitspreis);
-                setState(_Grundpreis, neuerGrundpreis);
+                setState(_Arbeitspreis, neuerArbeitspreis, true);
+                setState(_Grundpreis, neuerGrundpreis, true);
 
                 var message = 'Preisänderung für ' + geraet + ' wurde durchgeführt:' + '\n'
                     + 'alter Arbeitspreis:' + alterArbeitspreis + '.\n'
@@ -897,7 +928,7 @@ function pruefePreisaenderung(geraet) {
         } else if (today.getTime() > newdate.getTime()) {
 
             // Variable zurücksetzen
-            setState(_PreisaenderungDurchgefuehrt, false);
+            setState(_PreisaenderungDurchgefuehrt, false, true);
         }
     }
 }
